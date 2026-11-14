@@ -199,3 +199,43 @@ resource "aws_security_group" "rds" {
     Name = "${local.name}-rds-sg"
   }
 }
+
+
+# Map 4.3 · L1 · The host: stands in both dining halls (public subnets), guarded by alb-sg. 💰
+resource "aws_lb" "main" {
+  name               = "${local.name}-alb"
+  load_balancer_type = "application"
+  internal           = false
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = [for s in aws_subnet.public : s.id]
+}
+
+# Map 4.3 · L2 · The host's 2 waiter lists. Only waiters that answer /healthz with 200 get guests.
+resource "aws_lb_target_group" "service" {
+  for_each = toset(["vote", "result"])
+
+  name        = "${local.name}-${each.key}"
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.main.id
+
+  health_check {
+    path    = "/healthz"
+    matcher = "200"
+  }
+}
+
+# Map 4.3 · L1 · 2 doors: 80 goes to the vote list, 8080 goes to the result list.
+resource "aws_lb_listener" "service" {
+  for_each = { vote = 80, result = 8080 }
+
+  load_balancer_arn = aws_lb.main.arn
+  port              = each.value
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.service[each.key].arn
+  }
+}

@@ -7,3 +7,13 @@ output "redis_endpoint" {
 output "db_endpoint" {
   value = aws_db_instance.main.address
 }
+
+# Map 4.5 · O2 · The address on the sign: door 80, the voting page.
+output "vote_url" {
+  value = "http://${aws_lb.main.dns_name}"
+}
+
+# Map 4.5 · O2 · Door 8080: the scoreboard.
+output "result_url" {
+  value = "http://${aws_lb.main.dns_name}:8080"
+}

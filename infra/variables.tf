@@ -31,3 +31,22 @@ variable "image_tag" {
   description = "Image tag to deploy"
   type        = string
 }
+
+# Map 4.4 · E2 · How many workers per shift: dev 1, prod 2 (set in envs/*.tfvars).
+variable "desired_count" {
+  description = "Tasks per service"
+  type        = number
+}
+
+# Map 4.4 · S4 · The 2 options on the voting page. F2 changes option_a in dev only.
+variable "option_a" {
+  description = "First vote option"
+  type        = string
+  default     = "ביבי"
+}
+
+variable "option_b" {
+  description = "Second vote option"
+  type        = string
+  default     = "אייזנקוט"
+}
