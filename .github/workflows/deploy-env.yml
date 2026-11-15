@@ -1,0 +1,86 @@
+# Map 6 · P6, P7, P9, P10, P11 · Deliver one environment: apply, smoke test, version check.
+# Called twice by deploy.yml (dev, then prod), so the steps are written once.
+
+name: deploy-env
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        description: dev or prod
+        required: true
+        type: string
+      image_tag:
+        description: The image tag (git commit) to deploy
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # P7 · The GitHub Environment. For prod it has required reviewers, so the job waits here.
+    environment: ${{ inputs.env }}
+    # P11 · One deploy per environment at a time. A running apply is never cancelled.
+    concurrency:
+      group: deploy-${{ inputs.env }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      AWS_REGION: eu-north-1
+      TF_VAR_name_prefix: ${{ vars.NAME_PREFIX }}
+      TF_VAR_image_tag: ${{ inputs.image_tag }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init (${{ inputs.env }} state)
+        run: |
+          terraform init -input=false -no-color \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=voting-app/${{ inputs.env }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+
+      - name: terraform apply (${{ inputs.env }}, image ${{ inputs.image_tag }})
+        run: terraform apply -auto-approve -input=false -no-color -lock-timeout=5m -var-file=envs/${{ inputs.env }}.tfvars
+
+      # P9 · Both pages must answer 200 on /healthz. --fail turns a 4xx/5xx into an error;
+      # the retries give a new load balancer and new targets time to come up.
+      - name: Smoke test
+        run: |
+          for url in "$(terraform output -raw vote_url)/healthz" "$(terraform output -raw result_url)/healthz"; do
+            echo "Checking $url"
+            curl --fail --silent --show-error --output /dev/null \
+              --retry 20 --retry-delay 6 --retry-all-errors \
+              --write-out "%{http_code}\n" "$url"
+          done
+
+      # P10 · After a good deploy the code and AWS match: plan exit code 0.
+      # Exit code 2 = AWS still differs, usually because ECS rolled the new version back.
+      - name: Version check
+        run: |
+          set +e
+          terraform plan -detailed-exitcode -input=false -no-color -lock-timeout=5m -var-file=envs/${{ inputs.env }}.tfvars
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error::${{ inputs.env }} does not run image ${{ inputs.image_tag }}. ECS probably rolled the deployment back: see the service's Events and stopped tasks."
+            exit 1
+          fi
+          exit "$code"

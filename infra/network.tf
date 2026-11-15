@@ -220,6 +220,9 @@ resource "aws_lb_target_group" "service" {
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
 
+  # Old tasks are drained 30 s instead of the default 300 s: deployments finish faster.
+  deregistration_delay = 30
+
   health_check {
     path    = "/healthz"
     matcher = "200"
